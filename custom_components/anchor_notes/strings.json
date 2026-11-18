@@ -5,12 +5,14 @@
         "title": "Add an Anchor account",
         "description": "Each Anchor account is added separately. In Anchor, sign in as the person and copy Settings → API token.",
         "data": {
+          "ha_user_id": "Home Assistant user",
           "name": "Name",
           "url": "Anchor URL",
           "api_token": "API token"
         },
         "data_description": {
-          "name": "Whose notes these are, e.g. Alex. Used for the device and entity names.",
+          "ha_user_id": "Whose Anchor account this is. Dashboards use it to show each person their own notes.",
+          "name": "Optional. Defaults to the Home Assistant user's name.",
           "url": "Address of your Anchor server, e.g. http://192.168.1.10:3000",
           "api_token": "From Anchor: Settings → API token, signed in as this person."
         }
@@ -18,7 +20,9 @@
       "reauth_confirm": {
         "title": "New Anchor API token",
         "description": "Anchor rejected the token for {name}. It may have been regenerated or revoked. Paste the current one from Settings → API token.",
-        "data": { "api_token": "API token" }
+        "data": {
+          "api_token": "API token"
+        }
       },
       "reconfigure": {
         "title": "Change Anchor connection",
@@ -46,22 +50,45 @@
       "init": {
         "title": "Anchor options",
         "data": {
+          "ha_user_id": "Home Assistant user",
           "scan_interval": "Refresh every",
           "recent_count": "Notes in recent lists",
           "pinned_limit": "Max pinned notes listed",
           "reminder_limit": "Max upcoming reminders listed",
           "exclude_pinned_from_recent": "Leave pinned notes out of recent lists"
+        },
+        "data_description": {
+          "ha_user_id": "Whose Anchor account this is. Dashboards use it to show each person their own notes."
         }
       }
     }
   },
   "entity": {
     "sensor": {
-      "pending_reminders": { "name": "Pending reminders" },
-      "next_reminder": { "name": "Next reminder" },
-      "pinned_notes": { "name": "Pinned notes" },
-      "recent_created": { "name": "Recently created" },
-      "recent_edited": { "name": "Recently edited" }
+      "pending_reminders": {
+        "name": "Pending reminders"
+      },
+      "next_reminder": {
+        "name": "Next reminder"
+      },
+      "pinned_notes": {
+        "name": "Pinned notes"
+      },
+      "recent_created": {
+        "name": "Recently created"
+      },
+      "recent_edited": {
+        "name": "Recently edited"
+      }
+    },
+    "select": {
+      "recent_view": {
+        "name": "Recent notes view",
+        "state": {
+          "created": "New",
+          "edited": "Edited"
+        }
+      }
     }
   }
 }

@@ -6,7 +6,7 @@ from collections.abc import Generator
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUser
 
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.const import CONF_API_TOKEN, CONF_NAME, CONF_URL
@@ -14,7 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.anchor_notes.api import AnchorAuthError, AnchorConnectionError
-from custom_components.anchor_notes.const import CONF_RECENT_COUNT, DOMAIN
+from custom_components.anchor_notes.const import CONF_HA_USER, CONF_RECENT_COUNT, DOMAIN
 
 CLIENT = "custom_components.anchor_notes.config_flow.AnchorClient"
 HEALTH = {"status": "ok", "app": "anchor", "version": "0.18.0"}
@@ -60,6 +60,18 @@ async def test_user_flow_creates_entry(hass: HomeAssistant, client: AsyncMock) -
         CONF_API_TOKEN: "token-1",
     }
     assert result["result"].unique_id == "user-1"
+
+
+async def test_linked_ha_user_names_entry(hass: HomeAssistant, client: AsyncMock) -> None:
+    """With no name given, the entry takes the HA user's name and stores the link."""
+    user = MockUser(name="Alex Doe").add_to_hass(hass)
+    data = {k: v for k, v in USER_INPUT.items() if k != CONF_NAME} | {CONF_HA_USER: user.id}
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}, data=data
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Alex Doe"
+    assert result["result"].options == {CONF_HA_USER: user.id}
 
 
 async def test_owner_from_tags_when_no_owned_notes(
@@ -163,11 +175,13 @@ async def test_options_flow(hass: HomeAssistant) -> None:
         data={CONF_URL: "http://anchor.local:3009", CONF_API_TOKEN: "t"},
     )
     entry.add_to_hass(hass)
+    user = MockUser(name="Alex Doe").add_to_hass(hass)
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.FORM
 
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_RECENT_COUNT: 8}
+        result["flow_id"], {CONF_RECENT_COUNT: 8, CONF_HA_USER: user.id}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_RECENT_COUNT] == 8
+    assert entry.options[CONF_HA_USER] == user.id

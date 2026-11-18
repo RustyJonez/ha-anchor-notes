@@ -19,8 +19,11 @@ Manual install: copy `custom_components/anchor_notes` into `/config/custom_compo
 
 1. In Anchor, sign in as the person and open **Settings → API token**. Copy it.
 2. In Home Assistant: **Settings → Devices & services → Add integration → Anchor Notes**.
-3. Enter a name (e.g. *Alex*), your Anchor URL (e.g. `http://192.168.1.10:3000`) and the token.
+3. Pick the **Home Assistant user** this Anchor account belongs to, then enter your Anchor URL
+   (e.g. `http://192.168.1.10:3000`) and the token. Name is optional and defaults to the user's name.
 4. Repeat for each person.
+
+Already added an account without a user? **Configure** → *Home Assistant user*.
 
 The token is stored in Home Assistant's config entry storage. No `secrets.yaml` needed.
 If the token is regenerated or revoked in Anchor, Home Assistant shows a re-authenticate prompt.
@@ -30,6 +33,7 @@ To change the URL, use **⋮ → Reconfigure** on the entry.
 
 | Option | Default |
 |---|---|
+| Home Assistant user | none |
 | Refresh every | 5 min |
 | Notes in recent lists | 5 |
 | Max pinned notes listed | 10 |
@@ -38,7 +42,8 @@ To change the URL, use **⋮ → Reconfigure** on the entry.
 
 ## Sensors
 
-Entity IDs follow the name you entered, e.g. for *Alex*: `sensor.anchor_alex_pending_reminders`.
+Entity IDs follow the entry name, e.g. for *Alex*: `sensor.anchor_alex_pending_reminders`.
+Dashboards shouldn't rely on them, though. See [Dashboards](#dashboards).
 
 | Sensor | State | Attributes |
 |---|---|---|
@@ -47,6 +52,7 @@ Entity IDs follow the name you entered, e.g. for *Alex*: `sensor.anchor_alex_pen
 | Pinned notes | count | `notes` |
 | Recently created | timestamp of the newest note | `notes` |
 | Recently edited | timestamp of the most recent edit | `notes` |
+| Recent notes view (select) | `created` / `edited` | A dashboard switch for which recent list to show. Local only. |
 
 Items in `notes`:
 
@@ -68,11 +74,27 @@ Items in `overdue` / `upcoming`: `id`, `title`, `color`, `remind_at`, `recurrenc
 The list attributes are kept out of the recorder, so they don't grow your database.
 To refresh right away, call `homeassistant.update_entity` on any of the sensors.
 
+## Dashboards
+
+Every Anchor entity has two extra attributes: `ha_user_id` (the linked Home Assistant user) and
+`anchor_sensor` (`pending_reminders`, `next_reminder`, `pinned_notes`, `recent_created`,
+`recent_edited`, `recent_view`). A card can find the viewer's own entities without knowing any
+entity IDs. With button-card:
+
+```js
+const mine = {};
+for (const s of Object.values(states))
+  if (s.attributes.anchor_sensor && s.attributes.ha_user_id === user.id) mine[s.attributes.anchor_sensor] = s;
+// mine.pending_reminders.state, mine.pinned_notes.attributes.notes, ...
+```
+
+Toggle the recent view with `select.select_next` on `mine.recent_view.entity_id`.
+
 ### Notes on behaviour
 
 - **Reminder times.** Anchor stores reminders as local wall-clock times with no time zone.
   They're read in Home Assistant's time zone, so set that to match the phones you use Anchor on.
-- **Overdue** reminders stay listed until they're cleared in Anchor.
+- **Overdue** reminders stay listed until they're cleared in Anchor (Anchor itself shows them as "late").
 - Anchor's API leaves out **archived and trashed** notes, so their reminders don't appear.
 - Sharing: each person's pins and reminders are their own, even on shared notes.
 

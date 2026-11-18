@@ -9,13 +9,17 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_API_TOKEN, CONF_NAME, CONF_URL
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
@@ -30,6 +34,7 @@ from .api import (
 )
 from .const import (
     CONF_EXCLUDE_PINNED,
+    CONF_HA_USER,
     CONF_PINNED_LIMIT,
     CONF_RECENT_COUNT,
     CONF_REMINDER_LIMIT,
@@ -48,17 +53,28 @@ from .models import owner_id_from_notes
 _URL = TextSelector(TextSelectorConfig(type=TextSelectorType.URL))
 _TOKEN = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
 
-USER_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_NAME): TextSelector(),
-        vol.Required(CONF_URL): _URL,
-        vol.Required(CONF_API_TOKEN): _TOKEN,
-    }
-)
 TOKEN_SCHEMA = vol.Schema({vol.Required(CONF_API_TOKEN): _TOKEN})
 RECONFIGURE_SCHEMA = vol.Schema(
     {vol.Required(CONF_URL): _URL, vol.Required(CONF_API_TOKEN): _TOKEN}
 )
+
+
+async def _ha_users(hass: HomeAssistant) -> dict[str, str]:
+    """Real (non-system), active Home Assistant users: id -> display name."""
+    return {
+        user.id: user.name or user.id
+        for user in await hass.auth.async_get_users()
+        if user.is_active and not user.system_generated
+    }
+
+
+def _user_selector(users: dict[str, str]) -> SelectSelector:
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=[SelectOptionDict(value=uid, label=name) for uid, name in users.items()],
+            mode=SelectSelectorMode.DROPDOWN,
+        )
+    )
 
 
 def _number(minimum: int, maximum: int, unit: str | None = None) -> NumberSelector:
@@ -70,55 +86,75 @@ def _number(minimum: int, maximum: int, unit: str | None = None) -> NumberSelect
     return NumberSelector(config)
 
 
-OPTIONS_SCHEMA = vol.Schema(
-    {
-        vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): _number(
-            1, 60, "min"
-        ),
-        vol.Optional(CONF_RECENT_COUNT, default=DEFAULT_RECENT_COUNT): _number(1, 20),
-        vol.Optional(CONF_PINNED_LIMIT, default=DEFAULT_PINNED_LIMIT): _number(1, 50),
-        vol.Optional(CONF_REMINDER_LIMIT, default=DEFAULT_REMINDER_LIMIT): _number(
-            1, 50
-        ),
-        vol.Optional(
-            CONF_EXCLUDE_PINNED, default=DEFAULT_EXCLUDE_PINNED
-        ): BooleanSelector(),
-    }
-)
+def _options_schema(users: dict[str, str]) -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Optional(CONF_HA_USER): _user_selector(users),
+            vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): _number(
+                1, 60, "min"
+            ),
+            vol.Optional(CONF_RECENT_COUNT, default=DEFAULT_RECENT_COUNT): _number(
+                1, 20
+            ),
+            vol.Optional(CONF_PINNED_LIMIT, default=DEFAULT_PINNED_LIMIT): _number(
+                1, 50
+            ),
+            vol.Optional(CONF_REMINDER_LIMIT, default=DEFAULT_REMINDER_LIMIT): _number(
+                1, 50
+            ),
+            vol.Optional(
+                CONF_EXCLUDE_PINNED, default=DEFAULT_EXCLUDE_PINNED
+            ): BooleanSelector(),
+        }
+    )
 
 
 class AnchorConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Add an Anchor account by server URL + that user's API token."""
+    """Add an Anchor account: which HA user it belongs to, URL, that person's API token."""
 
     VERSION = 1
 
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: AnchorConfigEntry) -> AnchorOptionsFlow:
-        """Options: refresh interval and list sizes."""
+        """Options: linked HA user, refresh interval and list sizes."""
         return AnchorOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Name, URL, token."""
+        """HA user, optional name, URL, token."""
+        users = await _ha_users(self.hass)
         errors: dict[str, str] = {}
         if user_input is not None:
             url = normalize_url(user_input[CONF_URL])
             token = user_input[CONF_API_TOKEN].strip()
+            ha_user = user_input.get(CONF_HA_USER)
             self._async_abort_entries_match({CONF_API_TOKEN: token})
             owner_id, errors = await self._async_validate(url, token)
             if not errors:
                 if owner_id:
                     await self.async_set_unique_id(owner_id)
                     self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=user_input[CONF_NAME].strip(),
-                    data={CONF_URL: url, CONF_API_TOKEN: token},
+                title = (user_input.get(CONF_NAME) or "").strip() or users.get(
+                    ha_user or "", "Anchor"
                 )
+                return self.async_create_entry(
+                    title=title,
+                    data={CONF_URL: url, CONF_API_TOKEN: token},
+                    options={CONF_HA_USER: ha_user} if ha_user else {},
+                )
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_HA_USER): _user_selector(users),
+                vol.Optional(CONF_NAME): TextSelector(),
+                vol.Required(CONF_URL): _URL,
+                vol.Required(CONF_API_TOKEN): _TOKEN,
+            }
+        )
         return self.async_show_form(
             step_id="user",
-            data_schema=self.add_suggested_values_to_schema(USER_SCHEMA, user_input),
+            data_schema=self.add_suggested_values_to_schema(schema, user_input),
             errors=errors,
         )
 
@@ -179,7 +215,7 @@ class AnchorConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> tuple[str | None, dict[str, str]]:
         """Check the server is Anchor and the token works.
 
-        Returns (user ID if it could be determined, errors).
+        Returns (Anchor user ID if it could be determined, errors).
         """
         client = AnchorClient(async_get_clientsession(self.hass), url, token)
         try:
@@ -211,16 +247,17 @@ class AnchorConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class AnchorOptionsFlow(OptionsFlow):
-    """Refresh interval and list sizes."""
+    """Linked HA user, refresh interval and list sizes."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         if user_input is not None:
             return self.async_create_entry(data=user_input)
+        users = await _ha_users(self.hass)
         return self.async_show_form(
             step_id="init",
             data_schema=self.add_suggested_values_to_schema(
-                OPTIONS_SCHEMA, self.config_entry.options
+                _options_schema(users), self.config_entry.options
             ),
         )

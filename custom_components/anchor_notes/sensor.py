@@ -12,9 +12,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorEntityDescription,
 )
-from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -35,9 +33,9 @@ from .const import (
     DEFAULT_PINNED_LIMIT,
     DEFAULT_RECENT_COUNT,
     DEFAULT_REMINDER_LIMIT,
-    DOMAIN,
 )
 from .coordinator import AnchorConfigEntry, AnchorCoordinator
+from .entity import device_info, identity_attributes
 from .models import WALL_FORMAT, AnchorData, Note
 
 PARALLEL_UPDATES = 0  # all sensors share one coordinator fetch
@@ -169,17 +167,9 @@ class AnchorSensor(CoordinatorEntity[AnchorCoordinator], SensorEntity):
     ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
-        entry = coordinator.config_entry
-        self._attr_unique_id = f"{entry.entry_id}_{description.key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=f"Anchor {entry.title}",
-            manufacturer="Anchor",
-            model="Notes account",
-            sw_version=coordinator.server_version,
-            entry_type=DeviceEntryType.SERVICE,
-            configuration_url=entry.data[CONF_URL],
-        )
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
+        self._attr_device_info = device_info(coordinator)
+        self._identity = identity_attributes(coordinator, description.key)
 
     def _view(self) -> View:
         options = self.coordinator.config_entry.options
@@ -202,4 +192,4 @@ class AnchorSensor(CoordinatorEntity[AnchorCoordinator], SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return self.entity_description.attrs_fn(self._view())
+        return {**self._identity, **self.entity_description.attrs_fn(self._view())}
