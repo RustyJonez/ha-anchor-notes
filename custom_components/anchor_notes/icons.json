@@ -1,0 +1,11 @@
+{
+  "entity": {
+    "sensor": {
+      "pending_reminders": { "default": "mdi:bell-outline" },
+      "next_reminder": { "default": "mdi:bell-ring-outline" },
+      "pinned_notes": { "default": "mdi:pin" },
+      "recent_created": { "default": "mdi:note-plus-outline" },
+      "recent_edited": { "default": "mdi:note-edit-outline" }
+    }
+  }
+}
