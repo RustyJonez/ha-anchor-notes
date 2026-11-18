@@ -53,6 +53,7 @@ Dashboards shouldn't rely on them, though. See [Dashboards](#dashboards).
 | Recently created | timestamp of the newest note | `notes` |
 | Recently edited | timestamp of the most recent edit | `notes` |
 | Recent notes view (select) | `created` / `edited` | A dashboard switch for which recent list to show. Local only. |
+| Note viewer | when the shown note was loaded | `status`, `note_id`, `note`, `error` (see [Note viewer](#note-viewer)) |
 
 Items in `notes`:
 
@@ -81,11 +82,58 @@ Items in `overdue` / `upcoming`: `id`, `title`, `color`, `remind_at`, `recurrenc
 The list attributes are kept out of the recorder, so they don't grow your database.
 To refresh right away, call `homeassistant.update_entity` on any of the sensors.
 
+## Note viewer
+
+The other sensors only carry the start of each note. To show one note in full, call the
+**Show note** action on that account's Note viewer sensor:
+
+```yaml
+action: anchor_notes.show_note
+target:
+  entity_id: sensor.anchor_alex_note_viewer
+data:
+  note_id: 6f1c…   # from any `notes` / `overdue` / `upcoming` item, or the end of the note's Anchor URL
+```
+
+It fetches the note right then (`GET /api/notes/:id`). `status` goes `loading`, then `ready`, `not_found`
+or `error`. **Clear note** empties the sensor again. `note` keeps the note's formatting:
+
+```yaml
+id: 6f1c…
+title: Weekend           # "" when untitled (Anchor shows just the body)
+color: color_green
+pinned: true
+archived: false
+trashed: false
+permission: owner        # owner | editor | viewer
+shared_by: null
+created: / updated:      # ISO timestamps
+reminder: { remind_at: …, recurrence: weekly }   # or null
+attachments: 2           # count only; attachments aren't fetched
+truncated: false         # true past 400 lines / 20,000 characters
+blocks:                  # every line; one blank line kept between paragraphs
+  - spans: [{ text: "Plan" }]
+    header: 2            # 0 = not a heading
+    list: null           # bullet | ordered | checked | unchecked
+    indent: 0
+    number: null         # position in a numbered list
+    quote: false
+    code: false
+  - spans:
+      - { text: "Buy " }
+      - { text: "milk", bold: true, link: "https://…" }   # also italic, underline, strike, highlight
+    list: unchecked
+    …
+```
+
+The note and the other attributes are kept out of the recorder. History only records the time
+a note was opened, never its content.
+
 ## Dashboards
 
 Every Anchor entity has two extra attributes: `ha_user_id` (the linked Home Assistant user) and
 `anchor_sensor` (`pending_reminders`, `next_reminder`, `pinned_notes`, `recent_created`,
-`recent_edited`, `recent_view`). A card can find the viewer's own entities without knowing any
+`recent_edited`, `recent_view`, `note_view`). A card can find the viewer's own entities without knowing any
 entity IDs. With button-card:
 
 ```js
