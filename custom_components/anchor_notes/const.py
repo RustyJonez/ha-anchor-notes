@@ -34,3 +34,10 @@ ATTR_UPCOMING = "upcoming"
 ATTR_TITLE = "title"
 ATTR_NOTE_ID = "note_id"
 ATTR_RECURRENCE = "recurrence"
+
+# Note viewer: one note fetched on demand (action anchor_notes.show_note).
+SERVICE_SHOW_NOTE = "show_note"
+SERVICE_CLEAR_NOTE = "clear_note"
+ATTR_NOTE = "note"
+ATTR_STATUS = "status"  # idle | loading | ready | not_found | error
+ATTR_ERROR = "error"

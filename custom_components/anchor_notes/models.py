@@ -299,3 +299,143 @@ class AnchorData:
 
     def _candidates(self, exclude_pinned: bool) -> list[Note]:
         return [n for n in self.notes if not (exclude_pinned and n.pinned)]
+
+
+# ── Full note, fetched on demand for the note viewer ──────────────────────────
+# Kept in attributes the recorder skips, so none of this ends up in history.
+DETAIL_MAX_LINES = 400
+DETAIL_TEXT_LENGTH = 20_000  # whole note; the rest is cut and `truncated` is set
+INLINE_FLAGS = ("bold", "italic", "underline", "strike", "highlight")
+SAFE_LINK = re.compile(r"^(https?:|mailto:|tel:)", re.IGNORECASE)
+
+
+def _span(text: str, attrs: dict[str, Any]) -> dict[str, Any]:
+    span: dict[str, Any] = {"text": text}
+    for flag in INLINE_FLAGS:
+        if attrs.get(flag):
+            span[flag] = True
+    link = attrs.get("link")
+    if isinstance(link, str) and SAFE_LINK.match(link.strip()):
+        span["link"] = link.strip()
+    return span
+
+
+def _block(spans: list[dict[str, Any]], attrs: dict[str, Any]) -> dict[str, Any]:
+    kind = attrs.get("list")
+    try:
+        indent = max(0, int(attrs.get("indent") or 0))
+    except (TypeError, ValueError):
+        indent = 0
+    try:
+        header = max(0, int(attrs.get("header") or 0))
+    except (TypeError, ValueError):
+        header = 0
+    merged: list[dict[str, Any]] = []
+    for span in spans:  # join neighbours with the same formatting
+        if merged and {k: v for k, v in merged[-1].items() if k != "text"} == {
+            k: v for k, v in span.items() if k != "text"
+        }:
+            merged[-1] = {**merged[-1], "text": merged[-1]["text"] + span["text"]}
+        else:
+            merged.append(span)
+    return {
+        "spans": merged,
+        "list": kind if kind in LIST_KINDS else None,
+        "indent": indent,
+        "header": header,
+        "quote": bool(attrs.get("blockquote")),
+        "code": bool(attrs.get("code-block")),
+        "number": None,
+    }
+
+
+def delta_to_blocks(content: Any) -> list[dict[str, Any]]:
+    """Every line of a stored Quill delta with its inline and line formats.
+
+    Blank lines are kept (once in a row) because they're paragraph breaks.
+    """
+    blocks: list[dict[str, Any]] = []
+    spans: list[dict[str, Any]] = []
+    for op in _load_ops(content):
+        insert = op.get("insert")
+        attrs = op.get("attributes") if isinstance(op.get("attributes"), dict) else {}
+        if isinstance(insert, dict):  # embed (image, divider…): show a marker
+            name = next(iter(insert), "embed")
+            spans.append({"text": f"[{name}]", "embed": True})
+            continue
+        if not isinstance(insert, str):
+            continue
+        parts = insert.split("\n")
+        for i, part in enumerate(parts):
+            if part:
+                spans.append(_span(part, attrs))
+            if i == len(parts) - 1:
+                break
+            blocks.append(_block(spans, attrs))
+            spans = []
+    if spans:
+        blocks.append(_block(spans, {}))
+
+    def blank(b: dict[str, Any]) -> bool:
+        return not b["code"] and not "".join(s["text"] for s in b["spans"]).strip()
+
+    out: list[dict[str, Any]] = []
+    for block in blocks:
+        if blank(block) and (not out or blank(out[-1])):
+            continue
+        out.append(block)
+    while out and blank(out[-1]):
+        out.pop()
+
+    counters: dict[int, int] = {}
+    for block in out:
+        if block["list"] == "ordered":
+            counters = {k: v for k, v in counters.items() if k <= block["indent"]}
+            counters[block["indent"]] = counters.get(block["indent"], 0) + 1
+            block["number"] = counters[block["indent"]]
+        elif block["list"] is None or block["indent"] == 0:
+            counters = {}
+    return out
+
+
+def _limit_blocks(blocks: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+    kept: list[dict[str, Any]] = []
+    budget = DETAIL_TEXT_LENGTH
+    for block in blocks[:DETAIL_MAX_LINES]:
+        spans = []
+        for span in block["spans"]:
+            if budget <= 0:
+                break
+            text = span["text"][:budget]
+            budget -= len(text)
+            spans.append({**span, "text": text})
+        kept.append({**block, "spans": spans})
+        if budget <= 0:
+            break
+    return kept, len(kept) < len(blocks) or budget <= 0
+
+
+def parse_note_detail(raw: dict[str, Any], tz: tzinfo) -> dict[str, Any]:
+    """One note from GET /api/notes/:id, shaped for the note viewer."""
+    note = parse_note(raw, tz)
+    blocks, truncated = _limit_blocks(delta_to_blocks(raw.get("content")))
+    try:
+        attachments = int(raw.get("attachmentCount") or 0)
+    except (TypeError, ValueError):
+        attachments = 0
+    return {
+        "id": note.id,
+        "title": str(raw.get("title") or "").strip(),  # empty: Anchor shows the body only
+        "color": note.color,
+        "pinned": note.pinned,
+        "archived": bool(raw.get("isArchived")),
+        "trashed": raw.get("state") == "trashed",
+        "permission": raw.get("permission"),
+        "shared_by": note.shared_by,
+        "created": _iso(note.created),
+        "updated": _iso(note.updated),
+        "reminder": note.as_dict()["reminder"],
+        "attachments": attachments,
+        "blocks": blocks,
+        "truncated": truncated,
+    }

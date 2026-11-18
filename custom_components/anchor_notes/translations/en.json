@@ -79,6 +79,21 @@
       },
       "recent_edited": {
         "name": "Recently edited"
+      },
+      "note_view": {
+        "name": "Note viewer",
+        "state_attributes": {
+          "status": {
+            "name": "Status",
+            "state": {
+              "idle": "Idle",
+              "loading": "Loading",
+              "ready": "Ready",
+              "not_found": "Not found",
+              "error": "Error"
+            }
+          }
+        }
       }
     },
     "select": {
@@ -89,6 +104,27 @@
           "edited": "Edited"
         }
       }
+    }
+  },
+  "services": {
+    "show_note": {
+      "name": "Show note",
+      "description": "Fetches one note in full, with its formatting, into an account's Note viewer sensor for a dashboard to show. The note is kept out of history.",
+      "fields": {
+        "note_id": {
+          "name": "Note ID",
+          "description": "The note's ID, as listed in the other Anchor sensors' attributes (or the end of its Anchor web address)."
+        }
+      }
+    },
+    "clear_note": {
+      "name": "Clear note",
+      "description": "Empties an account's Note viewer sensor."
+    }
+  },
+  "exceptions": {
+    "not_note_viewer": {
+      "message": "Target an Anchor \"Note viewer\" sensor."
     }
   }
 }

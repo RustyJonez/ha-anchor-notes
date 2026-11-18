@@ -1,0 +1,16 @@
+show_note:
+  target:
+    entity:
+      integration: anchor_notes
+      domain: sensor
+  fields:
+    note_id:
+      required: true
+      example: "cm3x9k2p40001abcd"
+      selector:
+        text:
+clear_note:
+  target:
+    entity:
+      integration: anchor_notes
+      domain: sensor

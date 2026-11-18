@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 
@@ -19,6 +20,10 @@ class AnchorConnectionError(AnchorError):
 
 class AnchorAuthError(AnchorError):
     """Anchor rejected the API token."""
+
+
+class AnchorNotFoundError(AnchorError):
+    """The note doesn't exist or this user can't see it."""
 
 
 def normalize_url(url: str) -> str:
@@ -50,6 +55,14 @@ class AnchorClient:
         """Return all active (not archived, not trashed) notes for this user."""
         return await self._get_list("/api/notes")
 
+    async def get_note(self, note_id: str) -> dict[str, Any]:
+        """Return one note (any state this user can see), with its full content."""
+        path = f"/api/notes/{quote(note_id, safe='')}"
+        data = await self._get(path)
+        if not isinstance(data, dict):
+            raise AnchorError(f"Unexpected {path} response")
+        return data
+
     async def get_tags(self) -> list[dict[str, Any]]:
         """Return this user's tags."""
         return await self._get_list("/api/tags")
@@ -70,6 +83,8 @@ class AnchorClient:
             ) as resp:
                 if resp.status in (401, 403):
                     raise AnchorAuthError(f"{path} returned HTTP {resp.status}")
+                if resp.status in (400, 404):
+                    raise AnchorNotFoundError(f"{path} returned HTTP {resp.status}")
                 if resp.status >= 400:
                     raise AnchorError(f"{path} returned HTTP {resp.status}")
                 try:

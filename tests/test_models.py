@@ -10,10 +10,13 @@ from custom_components.anchor_notes.models import (
     UNTITLED,
     AnchorData,
     MAX_LINES,
+    DETAIL_TEXT_LENGTH,
+    delta_to_blocks,
     delta_to_lines,
     delta_to_text,
     owner_id_from_notes,
     parse_note,
+    parse_note_detail,
 )
 
 TZ = ZoneInfo("America/New_York")
@@ -236,3 +239,79 @@ def test_note_keeps_first_lines_and_counts_all() -> None:
 def test_blank_title_uses_first_line_not_whole_body() -> None:
     note = parse_note(_raw("1", title="", content=_content("Groceries\nMilk\nEggs\n")), TZ)
     assert note.title == "Groceries"
+
+
+def _ops(*ops: dict) -> str:
+    return json.dumps({"ops": list(ops)})
+
+
+def test_blocks_keep_inline_and_line_formats() -> None:
+    blocks = delta_to_blocks(
+        _ops(
+            {"insert": "Plan"},
+            {"insert": "\n", "attributes": {"header": 2}},
+            {"insert": "Buy "},
+            {"insert": "milk", "attributes": {"bold": True, "italic": True}},
+            {"insert": " at "},
+            {"insert": "store", "attributes": {"link": "https://shop.example"}},
+            {"insert": "\n", "attributes": {"list": "unchecked"}},
+            {"insert": "first\nsecond\n", "attributes": {}},
+            {"insert": "\n\n\nquoted"},
+            {"insert": "\n", "attributes": {"blockquote": True}},
+            {"insert": "  x = 1"},
+            {"insert": "\n", "attributes": {"code-block": "plain"}},
+            {"insert": "bad", "attributes": {"link": "javascript:alert(1)"}},
+            {"insert": {"image": "a.png"}},
+            {"insert": "\n\n"},
+        )
+    )
+    assert blocks[0]["header"] == 2 and blocks[0]["spans"] == [{"text": "Plan"}]
+    assert blocks[1]["list"] == "unchecked"
+    assert blocks[1]["spans"] == [
+        {"text": "Buy "},
+        {"text": "milk", "bold": True, "italic": True},
+        {"text": " at "},
+        {"text": "store", "link": "https://shop.example"},
+    ]
+    assert [b["spans"][0]["text"] for b in blocks[2:4]] == ["first", "second"]
+    assert blocks[4]["spans"] == []  # one blank line kept for the paragraph break
+    assert blocks[5]["quote"] and blocks[5]["spans"][0]["text"] == "quoted"
+    assert blocks[6]["code"] and blocks[6]["spans"][0]["text"] == "  x = 1"
+    assert blocks[7]["spans"] == [{"text": "bad"}, {"text": "[image]", "embed": True}]
+    assert len(blocks) == 8  # trailing blank lines dropped
+
+
+def test_blocks_number_ordered_lists() -> None:
+    blocks = delta_to_blocks(
+        _ops(
+            {"insert": "a"},
+            {"insert": "\n", "attributes": {"list": "ordered"}},
+            {"insert": "b"},
+            {"insert": "\n", "attributes": {"list": "ordered"}},
+            {"insert": "b1"},
+            {"insert": "\n", "attributes": {"list": "ordered", "indent": 1}},
+            {"insert": "c"},
+            {"insert": "\n", "attributes": {"list": "ordered"}},
+        )
+    )
+    assert [b["number"] for b in blocks] == [1, 2, 1, 3]
+
+
+def test_note_detail() -> None:
+    raw = _raw(
+        "n1",
+        title="",
+        content=_ops({"insert": "x" * (DETAIL_TEXT_LENGTH + 50) + "\nmore\n"}),
+        isArchived=True,
+        state="active",
+        attachmentCount=2,
+        reminder={"remindAt": "2026-11-20T09:00", "recurrence": "weekly"},
+    )
+    detail = parse_note_detail(raw, TZ)
+    assert detail["title"] == ""
+    assert detail["archived"] and not detail["trashed"]
+    assert detail["attachments"] == 2
+    assert detail["reminder"]["recurrence"] == "weekly"
+    assert detail["truncated"]
+    assert len(detail["blocks"]) == 1
+    assert len(detail["blocks"][0]["spans"][0]["text"]) == DETAIL_TEXT_LENGTH

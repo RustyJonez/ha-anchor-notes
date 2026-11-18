@@ -15,12 +15,23 @@
       },
       "recent_edited": {
         "default": "mdi:note-edit-outline"
+      },
+      "note_view": {
+        "default": "mdi:note-search-outline"
       }
     },
     "select": {
       "recent_view": {
         "default": "mdi:swap-horizontal"
       }
+    }
+  },
+  "services": {
+    "show_note": {
+      "service": "mdi:note-search-outline"
+    },
+    "clear_note": {
+      "service": "mdi:note-remove-outline"
     }
   }
 }

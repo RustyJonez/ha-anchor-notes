@@ -9,6 +9,11 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUs
 from homeassistant.const import CONF_API_TOKEN, CONF_URL
 from homeassistant.core import HomeAssistant
 
+import pytest
+
+from homeassistant.exceptions import ServiceValidationError
+
+from custom_components.anchor_notes.api import AnchorNotFoundError
 from custom_components.anchor_notes.const import CONF_HA_USER, DOMAIN
 
 NOTES = [
@@ -44,6 +49,7 @@ KEYS = {
     "recent_created",
     "recent_edited",
     "recent_view",
+    "note_view",
 }
 
 
@@ -106,3 +112,60 @@ async def test_unlinked_entry_has_no_user(hass: HomeAssistant) -> None:
     anchor = [s for s in hass.states.async_all() if "anchor_sensor" in s.attributes]
     assert len(anchor) == len(KEYS)
     assert all(s.attributes["ha_user_id"] is None for s in anchor)
+
+
+async def test_note_viewer(hass: HomeAssistant) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Alex",
+        unique_id="user-1",
+        data={CONF_URL: "http://anchor.local:3009", CONF_API_TOKEN: "t"},
+    )
+    entry.add_to_hass(hass)
+    with patch("custom_components.anchor_notes.AnchorClient", autospec=True) as cls:
+        client = cls.return_value
+        client.get_health.return_value = {"app": "anchor"}
+        client.get_notes.return_value = NOTES
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    viewer = "sensor.anchor_alex_note_viewer"
+    state = hass.states.get(viewer)
+    assert state.attributes["status"] == "idle"
+    assert state.attributes["note"] is None
+
+    client.get_note.return_value = {
+        **NOTES[0],
+        "content": '{"ops":[{"insert":"Milk","attributes":{"bold":true}},{"insert":"\\n"}]}',
+    }
+    await hass.services.async_call(
+        DOMAIN, "show_note", {"note_id": "n1"}, target={"entity_id": viewer}, blocking=True
+    )
+    client.get_note.assert_awaited_with("n1")
+    state = hass.states.get(viewer)
+    assert state.attributes["status"] == "ready"
+    assert state.attributes["note"]["title"] == "Groceries"
+    assert state.attributes["note"]["blocks"][0]["spans"] == [{"text": "Milk", "bold": True}]
+    assert state.state != "unknown"
+
+    client.get_note.side_effect = AnchorNotFoundError("404")
+    await hass.services.async_call(
+        DOMAIN, "show_note", {"note_id": "gone"}, target={"entity_id": viewer}, blocking=True
+    )
+    state = hass.states.get(viewer)
+    assert state.attributes["status"] == "not_found"
+    assert state.attributes["note"] is None
+
+    await hass.services.async_call(
+        DOMAIN, "clear_note", target={"entity_id": viewer}, blocking=True
+    )
+    assert hass.states.get(viewer).attributes["status"] == "idle"
+
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN,
+            "show_note",
+            {"note_id": "n1"},
+            target={"entity_id": "sensor.anchor_alex_pending_reminders"},
+            blocking=True,
+        )
