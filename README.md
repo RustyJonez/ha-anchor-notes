@@ -64,6 +64,13 @@ color: yellow            # Anchor's note background, or null
 created: "2026-11-10T14:02:11+00:00"
 updated: "2026-11-16T20:15:40+00:00"
 shared_by: Sam           # set when someone else shared the note with you
+lines:                   # first 6 non-empty lines, with Anchor's line formats
+  - { text: Shopping, list: null, indent: 0, header: true, number: null }
+  - { text: Milk, list: checked, indent: 0, header: false, number: null }
+  - { text: Eggs, list: unchecked, indent: 0, header: false, number: null }
+  - { text: Vents, list: bullet, indent: 1, header: false, number: null }
+  - { text: Step one, list: ordered, indent: 0, header: false, number: 1 }
+line_count: 9            # all non-empty lines, so cards can show "+3 more"
 reminder:                # or null
   remind_at: "2026-11-20T09:00:00-05:00"
   recurrence: none       # none | daily | weekly | monthly | yearly

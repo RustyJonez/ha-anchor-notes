@@ -9,6 +9,8 @@ from zoneinfo import ZoneInfo
 from custom_components.anchor_notes.models import (
     UNTITLED,
     AnchorData,
+    MAX_LINES,
+    delta_to_lines,
     delta_to_text,
     owner_id_from_notes,
     parse_note,
@@ -142,6 +144,10 @@ def test_as_dict_shapes() -> None:
         "created": datetime(2026, 11, 1, 12, tzinfo=ZoneInfo("UTC")).isoformat(),
         "updated": datetime(2026, 11, 1, 12, tzinfo=ZoneInfo("UTC")).isoformat(),
         "shared_by": None,
+        "lines": [
+            {"text": "Hello", "list": None, "indent": 0, "header": False, "number": None}
+        ],
+        "line_count": 1,
         "reminder": {"remind_at": "2026-12-04T09:00:00-05:00", "recurrence": "none"},
     }
     assert note.reminder_dict()["remind_at"] == "2026-12-04T09:00:00-05:00"
@@ -151,3 +157,82 @@ def test_owner_id_ignores_shared_notes() -> None:
     raw = [_raw("1", userId="someone-else", permission="viewer"), _raw("2")]
     assert owner_id_from_notes(raw) == "user-1"
     assert owner_id_from_notes([raw[0]]) is None
+
+
+def _ops(*ops: dict) -> str:
+    return json.dumps({"ops": list(ops)})
+
+
+def test_lines_keep_list_formats() -> None:
+    content = _ops(
+        {"insert": "Shopping"},
+        {"insert": "\n", "attributes": {"header": 2}},
+        {"insert": "Milk"},
+        {"insert": "\n", "attributes": {"list": "checked"}},
+        {"insert": "Eggs"},
+        {"insert": "\n", "attributes": {"list": "unchecked"}},
+        {"insert": "Vents"},
+        {"insert": "\n", "attributes": {"list": "bullet"}},
+        {"insert": "\n"},
+        {"insert": "Plain paragraph\n"},
+    )
+    lines = delta_to_lines(content)
+    assert [(ln.text, ln.list, ln.header) for ln in lines] == [
+        ("Shopping", None, True),
+        ("Milk", "checked", False),
+        ("Eggs", "unchecked", False),
+        ("Vents", "bullet", False),
+        ("Plain paragraph", None, False),
+    ]
+    # The flat preview still works, now without run-ons from empty lines.
+    assert delta_to_text(content) == "Shopping Milk Eggs Vents Plain paragraph"
+
+
+def test_ordered_lists_are_numbered_per_indent_and_restart() -> None:
+    content = _ops(
+        {"insert": "One"},
+        {"insert": "\n", "attributes": {"list": "ordered"}},
+        {"insert": "One-a"},
+        {"insert": "\n", "attributes": {"list": "ordered", "indent": 1}},
+        {"insert": "One-b"},
+        {"insert": "\n", "attributes": {"list": "ordered", "indent": 1}},
+        {"insert": "Two"},
+        {"insert": "\n", "attributes": {"list": "ordered"}},
+        {"insert": "Break\n"},
+        {"insert": "Again"},
+        {"insert": "\n", "attributes": {"list": "ordered"}},
+    )
+    got = [(ln.text, ln.indent, ln.number) for ln in delta_to_lines(content)]
+    assert got == [
+        ("One", 0, 1),
+        ("One-a", 1, 1),
+        ("One-b", 1, 2),
+        ("Two", 0, 2),
+        ("Break", 0, None),
+        ("Again", 0, 1),
+    ]
+
+
+def test_formatted_text_split_across_ops_is_one_line() -> None:
+    content = _ops(
+        {"insert": "Call "},
+        {"insert": "dentist", "attributes": {"bold": True}},
+        {"insert": " today"},
+        {"insert": "\n", "attributes": {"list": "bullet"}},
+    )
+    assert [(ln.text, ln.list) for ln in delta_to_lines(content)] == [
+        ("Call dentist today", "bullet")
+    ]
+
+
+def test_note_keeps_first_lines_and_counts_all() -> None:
+    body = "".join(f"Item {i}\n" for i in range(MAX_LINES + 3))
+    note = parse_note(_raw("1", content=_content(body)), TZ)
+    assert len(note.lines) == MAX_LINES
+    assert note.line_count == MAX_LINES + 3
+    assert note.as_dict()["lines"][0]["text"] == "Item 0"
+
+
+def test_blank_title_uses_first_line_not_whole_body() -> None:
+    note = parse_note(_raw("1", title="", content=_content("Groceries\nMilk\nEggs\n")), TZ)
+    assert note.title == "Groceries"

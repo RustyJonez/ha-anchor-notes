@@ -21,23 +21,105 @@ _WHITESPACE = re.compile(r"\s+")
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
-def delta_to_text(content: Any) -> str:
-    """Flatten a stored Quill delta ('{"ops": [...]}') to one line of plain text."""
+# How much of each note's body is kept for dashboards (the full rich text never leaves the integration).
+MAX_LINES = 6
+LINE_LENGTH = 100
+LIST_KINDS = ("bullet", "ordered", "checked", "unchecked")
+
+
+@dataclass(frozen=True, slots=True)
+class Line:
+    """One line of a note body, with Anchor's (Quill's) line format."""
+
+    text: str
+    list: str | None = None  # bullet | ordered | checked | unchecked
+    indent: int = 0
+    header: bool = False
+    number: int | None = None  # position within a numbered list
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "text": self.text,
+            "list": self.list,
+            "indent": self.indent,
+            "header": self.header,
+            "number": self.number,
+        }
+
+
+def _load_ops(content: Any) -> list[dict[str, Any]]:
     if not isinstance(content, str) or not content:
-        return ""
+        return []
     try:
         parsed = json.loads(content)
     except ValueError:
-        return ""
+        return []
     ops = parsed.get("ops") if isinstance(parsed, dict) else None
-    if not isinstance(ops, list):
-        return ""
-    parts = [
-        op["insert"]
-        for op in ops
-        if isinstance(op, dict) and isinstance(op.get("insert"), str)
-    ]
-    return _WHITESPACE.sub(" ", " ".join(parts)).strip()
+    return [op for op in ops if isinstance(op, dict)] if isinstance(ops, list) else []
+
+
+def delta_to_lines(content: Any) -> list[Line]:
+    """Split a stored Quill delta into non-empty lines, keeping list/indent/header formats.
+
+    In Quill, a line's block format is carried by the newline that ends it.
+    Embeds (images etc.) are skipped.
+    """
+    lines: list[Line] = []
+    current = ""
+    for op in _load_ops(content):
+        insert = op.get("insert")
+        if not isinstance(insert, str):
+            continue
+        attrs = op.get("attributes") if isinstance(op.get("attributes"), dict) else {}
+        parts = insert.split("\n")
+        for i, part in enumerate(parts):
+            current += part
+            if i == len(parts) - 1:
+                break  # no newline after the last part: the line continues in the next op
+            text = _WHITESPACE.sub(" ", current).strip()
+            current = ""
+            if not text:
+                continue
+            kind = attrs.get("list")
+            try:
+                indent = max(0, int(attrs.get("indent") or 0))
+            except (TypeError, ValueError):
+                indent = 0
+            lines.append(
+                Line(
+                    text=text,
+                    list=kind if kind in LIST_KINDS else None,
+                    indent=indent,
+                    header=bool(attrs.get("header")),
+                )
+            )
+    tail = _WHITESPACE.sub(" ", current).strip()
+    if tail:
+        lines.append(Line(text=tail))
+    return _number_ordered(lines)
+
+
+def _number_ordered(lines: list[Line]) -> list[Line]:
+    """Give ordered-list lines their 1, 2, 3… per indent level, restarting after other lines."""
+    counters: dict[int, int] = {}
+    out: list[Line] = []
+    for line in lines:
+        if line.list == "ordered":
+            counters = {k: v for k, v in counters.items() if k <= line.indent}
+            counters[line.indent] = counters.get(line.indent, 0) + 1
+            out.append(
+                Line(line.text, line.list, line.indent, line.header, counters[line.indent])
+            )
+        else:
+            if line.list is None or line.indent == 0:
+                counters = {}
+            out.append(line)
+    return out
+
+
+def delta_to_text(content: Any) -> str:
+    """Flatten a stored Quill delta ('{"ops": [...]}') to one line of plain text."""
+    return " ".join(line.text for line in delta_to_lines(content))
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
@@ -75,6 +157,8 @@ class Note:
     updated: datetime | None
     shared_by: str | None
     reminder: Reminder | None
+    lines: tuple[Line, ...] = ()
+    line_count: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         """Attribute form used in the sensors' note lists."""
@@ -86,6 +170,8 @@ class Note:
             "created": _iso(self.created),
             "updated": _iso(self.updated),
             "shared_by": self.shared_by,
+            "lines": [line.as_dict() for line in self.lines],
+            "line_count": self.line_count,
             "reminder": (
                 {
                     "remind_at": self.reminder.at.isoformat(),
@@ -125,10 +211,11 @@ def parse_reminder(raw: Any, tz: tzinfo) -> Reminder | None:
 
 def parse_note(raw: dict[str, Any], tz: tzinfo) -> Note:
     """Parse one note from GET /api/notes."""
-    text = delta_to_text(raw.get("content"))
+    lines = delta_to_lines(raw.get("content"))
+    text = " ".join(line.text for line in lines)
     title = str(raw.get("title") or "").strip()
     if not title:
-        title = text[:TITLE_FALLBACK_LENGTH] if text else UNTITLED
+        title = lines[0].text[:TITLE_FALLBACK_LENGTH] if lines else UNTITLED
     shared = raw.get("sharedBy")
     return Note(
         id=str(raw.get("id")),
@@ -140,6 +227,11 @@ def parse_note(raw: dict[str, Any], tz: tzinfo) -> Note:
         updated=_parse_timestamp(raw.get("updatedAt")),
         shared_by=shared.get("name") if isinstance(shared, dict) else None,
         reminder=parse_reminder(raw.get("reminder"), tz),
+        lines=tuple(
+            Line(line.text[:LINE_LENGTH], line.list, line.indent, line.header, line.number)
+            for line in lines[:MAX_LINES]
+        ),
+        line_count=len(lines),
     )
 
 
