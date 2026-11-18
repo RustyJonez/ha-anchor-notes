@@ -62,15 +62,12 @@ RECONFIGURE_SCHEMA = vol.Schema(
 
 
 def _number(minimum: int, maximum: int, unit: str | None = None) -> NumberSelector:
-    return NumberSelector(
-        NumberSelectorConfig(
-            min=minimum,
-            max=maximum,
-            step=1,
-            mode=NumberSelectorMode.BOX,
-            unit_of_measurement=unit,
-        )
+    config = NumberSelectorConfig(
+        min=minimum, max=maximum, step=1, mode=NumberSelectorMode.BOX
     )
+    if unit:  # the selector rejects unit_of_measurement=None
+        config["unit_of_measurement"] = unit
+    return NumberSelector(config)
 
 
 OPTIONS_SCHEMA = vol.Schema(

@@ -79,7 +79,7 @@ To refresh right away, call `homeassistant.update_entity` on any of the sensors.
 ## Development
 
 ```sh
-python3.13 -m venv .venv && . .venv/bin/activate
+python3.14 -m venv .venv && . .venv/bin/activate
 pip install -r requirements_test.txt
 pytest
 ```
